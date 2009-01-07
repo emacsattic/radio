@@ -141,7 +141,13 @@
 	       (radio-describe-group name))
 	   *radio-groups*))
 
-;;; Getting etags for a group
+;;; Getting etags and topic tags index for a group
+
+;; The topic search for Radio uses the existing Emacs tags indexing
+;; facility, and is integrated with ordinary etags search. This means
+;; that Radio tags can be used and searched alongside function and
+;; variable definitions with Emacs commands like M-x tags-search and
+;; M-x find-tag.
 
 (defvar radio-etags-program "etags")
 
@@ -174,8 +180,7 @@
 ;; TODO TODO TODO TODO TODO TODO TODO TODO
 ;; TODO TODO TODO TODO TODO TODO TODO TODO
 
-
-;;; Reading and writing tags
+;;; Reading and writing topic tags
 
 (defconst radio-tag-regexp (concat "\\(<" ":\\)[[:space:]]*\\(.*\\)[[:space:]]*\\(:" ">\\)")
   "Regular expression matching tags.")
