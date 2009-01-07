@@ -2,3 +2,10 @@ Emacs Radio Mode is an etags-integrated data linking and browsing system.
 
 (C) Copyright 2008, 2009 by David O'Toole <dto@gnu.org>
 See the file COPYING for license information.
+
+ <: foo :> 
+
+ <: bar :>
+
+ <: baz :>
+
