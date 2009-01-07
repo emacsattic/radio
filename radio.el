@@ -1,4 +1,4 @@
-;;; radio.el --- memex-style multi-file topic tag link navigator
+;;; radio.el --- text file tag navigator with etags search integration
 
 ;; Copyright (C) 2007, 2008  David O'Toole
 
@@ -43,10 +43,26 @@
 ;; A group is a set of files that are handled together.
 
 (defstruct radio-group 
-  name selected-p description files base-directory 
-  format include exclude etags-file etags-arguments)
+  ;; Required slots.
+  name ;; String name of group. 
+  base-directory ;; Directory to scan for files.
+  format ;; A keyword like :lisp, :text, :org
+  include ;; Regexp or list of files to include
+  ;; Optional slots
+  description ;; Optional string description.
+  exclude  ;; Regexp or list of files to exclude
+  etags-file  ;; etags filename (relative to base-directory).
+              ;; The default is TAGS.
+  etags-arguments ;; List of argument strings for etags.
+  ;; Other slots
+  selected-p ;; When non-nil, multi-group operations apply to this group. 
+  files ;; Cached list of files in this group; updated on each file scan.
+        ;; See also `radio-scan-group-files'.
+  )
 
 (defun radio-match-regexp-or-list (filename regexp-or-list)
+  "Return non-nil if FILENAME is either a member of the list (or
+matches the regexp) REGEXP-OR-LIST."
   (if (null regexp-or-list)
       nil
       (etypecase regexp-or-list
@@ -54,11 +70,16 @@
 	(list (member filename regexp-or-list)))))
 
 (defun radio-filter-files (files regexp-or-list)
+  "Return FILES with any matching files removed.  If the second
+argument is a regular expression, remove files matching the
+regexp. If it's a list, remove files matching any filename in the
+list. See also `radio-match-regexp-or-list'."
   (labels ((match (filename)
 	     (radio-match-regexp-or-list filename regexp-or-list)))
     (remove-if #'match files)))
 
 (defun radio-get-group-files (group)
+  "Obtain a list of all the available files in the group GROUP."
   (let ((dir (radio-group-base-directory group)))
     (labels ((expand (filename)
 	       (expand-file-name filename dir)))
@@ -91,10 +112,11 @@
 (when (null *radio-groups*)
   (radio-init-groups))
 
-(defun radio-add-group (group)
-  (setf (gethash (radio-group-name group)
-		 *radio-groups*)
-	group))
+(defun radio-add-group (&rest args)
+  (let ((group (apply #'radio-create-group args)))
+    (setf (gethash (radio-group-name group)
+		   *radio-groups*)
+	  group)))
 
 (defun radio-delete-group (name)
   (remhash name *radio-groups*))
@@ -124,16 +146,17 @@
   (let (groups)
     (maphash #'(lambda (name group)
 		 (declare (ignore name))
-		 (push group groups))
-	   *radio-groups*)
+		 (when (radio-group-selected-p group)
+		   (push group groups)))
+	     *radio-groups*)
     groups))
 
 ;;; Printing information about groups
 
 (defun* radio-describe-group (&optional (group-name (radio-choose-group)))
+  (interactive)
   (let ((group (gethash group-name *radio-groups*)))
-    (princ (list group-name
-		 (radio-group-description group)))))
+    (message (radio-group-description group))))
 
 (defun radio-show-selected-groups ()
   (interactive)
@@ -156,6 +179,7 @@
 (defvar radio-default-etags-file-name "TAGS")
 
 (defun* radio-scan-group-etags (&optional (group-name (radio-choose-group)))
+  (interactive)
   (radio-scan-group-files group-name)
   (let* ((group (gethash group-name *radio-groups*))
 	 (tags-file (expand-file-name (or (radio-group-etags-file group)
@@ -170,24 +194,16 @@
 	(message "Scanned etags for group %s with %d files." 
 		 group-name (length (radio-group-files group)))
 	(error "Failed to scan etags for group %s." group-name))))
-    
 
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
+;;; Reading and writing topic tags in a buffer
 
-;;; Reading and writing topic tags
-
-(defconst radio-tag-regexp (concat "\\(<" ":\\)[[:space:]]*\\(.*\\)[[:space:]]*\\(:" ">\\)")
+(defconst radio-tag-regexp 
+  (concat "\\(<" ":\\)[[:space:]]+\\(.*\\)[[:space:]]+\\(:" ">\\)")
   "Regular expression matching tags.")
 
 (defun radio-format-tag-regexp (string)
   "Make a regexp to find STRING as a tag."
-  (concat ":" "\\.[[:space:]]*" string "[[:space:]]*>"))
+  (concat "<" ":" "\\.[[:space:]]+" string "[[:space:]]+" ":" ">"))
 
 (defun radio-read-next-tag (&optional bound)
   "Find the next tag, if any, regardless of tag content."
@@ -213,7 +229,7 @@
   (or (radio-tag-on-current-line)
       (radio-read-previous-tag)))
 
-;;; Finding all tags in a project
+;;; Finding topic tags
 
 (defvar *radio-tags* nil)
 
@@ -226,22 +242,6 @@
 	(push (match-string-no-properties 2) tags))
       tags)))
 
-(defun* radio-all-tags-in-project (&optional (project *radio-project*))
-  (with-temp-buffer
-    (let ((files (radio-project-files project))
-	  tags)
-      (dolist (f files)
-	(delete-region (point-min) (point-max))
-	(insert-file-contents-literally (radio-project-file project f))
-	(setf tags (union tags (remove-duplicates (radio-all-tags-in-buffer) :test 'equal))))
-      (sort tags #'string<))))
-
-(defun* radio-rescan-tags (&optional (project *radio-project*))
-  (interactive)
-  (message "Scanning project for tags...")
-  (setf *radio-tags* (radio-all-tags-in-project project))
-  (message "Scanning project for tags... Done."))
-
 (defun radio-choose-tag ()
   (interactive)
   (when (null *radio-tags*)
@@ -251,6 +251,15 @@
 (defun radio-find-tag ()
   (interactive)
   (radio-seek-tag (radio-choose-tag)))
+
+
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
   
 ;;; Navigating groups of tags within the current buffer
 
@@ -416,6 +425,10 @@
     (radio-disable)))
 
 ;; (add-hook 'emacs-lisp-mode-hook #'radio-enable)
+
+;; <: foo :> 
+;; <: bar :>
+;; <: baz :>
 
 (provide 'radio)
 ;;; radio.el ends here
