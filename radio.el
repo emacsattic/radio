@@ -35,61 +35,149 @@
 ;;
 ;; (require 'radio)
 ;; (add-hook 'emacs-lisp-mode-hook #'radio-mode)
-;; (setf radio-configuration-alist 
-;;       `(("/home/dto/rlx" 
-;; 	 "browser.lisp"
-;; 	 "cells.lisp"
-;; 	 "clon.lisp"
-;; 	 "console.lisp"
-;; 	 "math.lisp"
-;; 	 "rgb.lisp"
-;; 	 "rlx.lisp"
-;; 	 "radio.el"
-;; 	 "widgets.lisp"
-; 	 "worlds.lisp")))
-;; (radio-switch-project "/home/dto/rlx")
-
-;; M-x radio-mode, then: 
-;;   C-c , n   radio-next-tag
-;;   C-c , p   radio-previous-tag
-;;   C-c , c   radio-find-tag
 
 (require 'cl)
 
-;;; Configuring which files to search
+;;; Defining groups of files
 
-(defun* radio-buffer-directory (&optional (buffer (current-buffer)))
-  (file-name-directory (expand-file-name (buffer-file-name buffer))))
+;; A group is a set of files that are handled together.
 
-(defun* radio-bare-file-name (&optional (buffer (current-buffer)))
-  (file-name-nondirectory (expand-file-name (buffer-file-name buffer))))
+(defstruct radio-group 
+  name selected-p description files base-directory 
+  format include exclude etags-file etags-arguments)
 
-(defvar *radio-files* nil)
+(defun radio-match-regexp-or-list (filename regexp-or-list)
+  (if (null regexp-or-list)
+      nil
+      (etypecase regexp-or-list
+	(string (string-match regexp-or-list filename))
+	(list (member filename regexp-or-list)))))
 
-(defvar radio-configuration-alist nil)
+(defun radio-filter-files (files regexp-or-list)
+  (labels ((match (filename)
+	     (radio-match-regexp-or-list filename regexp-or-list)))
+    (remove-if #'match files)))
 
-(defun radio-choose-project ()
+(defun radio-get-group-files (group)
+  (let ((dir (radio-group-base-directory group)))
+    (labels ((expand (filename)
+	       (expand-file-name filename dir)))
+      (let* ((include (radio-group-include group))
+	     (files (etypecase include
+		      (string (directory-files dir nil include))
+		      (list (mapcar #'expand include)))))
+	(mapcar #'expand 
+		(remove-duplicates 
+		 (radio-filter-files files (radio-group-exclude group))
+		 :test 'equal))))))
+
+(defun radio-load-group-files (group)
+  (setf (radio-group-files group)
+	(radio-get-group-files group)))
+
+(defun radio-create-group (&rest forms)
+  (let ((group (apply #'make-radio-group forms)))
+    (prog1 group 
+      (radio-load-group-files group))))
+
+;;; Groups table
+
+(defvar *radio-groups* nil)
+
+(defun radio-init-groups ()
   (interactive)
-  (completing-read "Choose project: " radio-configuration-alist))
+  (setf *radio-groups* (make-hash-table :test 'equal)))
 
-(defvar *radio-project* nil)
+(when (null *radio-groups*)
+  (radio-init-groups))
 
-(defun radio-project-files (project)
-  (cdr-safe (assoc project radio-configuration-alist)))
+(defun radio-add-group (group)
+  (setf (gethash (radio-group-name group)
+		 *radio-groups*)
+	group))
 
-(defun radio-project-file (project file)
-  (let ((entry (assoc project radio-configuration-alist)))
-    (when entry (expand-file-name file (car entry)))))
+(defun radio-delete-group (name)
+  (remhash name *radio-groups*))
 
-(defun* radio-switch-project (&optional (project (radio-choose-project)))
+(defun* radio-scan-group-files (&optional (group-name (radio-choose-group)))
+  (radio-load-group-files (gethash group-name *radio-groups*))
+  (message "Scanned group %s for files." group-name))
+
+;;; Selecting and deselecting groups
+
+(defun* radio-choose-group () 
+  (completing-read "Choose a group: " *radio-groups* nil :require-match))
+
+(defun* radio-select-group (&optional (group-name (radio-choose-group)))
   (interactive)
-  (setf *radio-project* project)
-  (setf *radio-files* (radio-project-files project))
-  (message "Switched to radio project %s with %d files." project (length *radio-files*)))
+  (let ((group (gethash group-name *radio-groups*)))
+    (prog1 group 
+      (setf (radio-group-selected-p group) t))))
+
+(defun* radio-deselect-group (&optional (group-name (radio-choose-group)))
+  (interactive)
+  (let ((group (gethash group-name *radio-groups*)))
+    (prog1 group 
+      (setf (radio-group-selected-p group) nil))))
+
+(defun radio-get-selected-groups ()
+  (let (groups)
+    (maphash #'(lambda (name group)
+		 (declare (ignore name))
+		 (push group groups))
+	   *radio-groups*)
+    groups))
+
+;;; Printing information about groups
+
+(defun* radio-describe-group (&optional (group-name (radio-choose-group)))
+  (let ((group (gethash group-name *radio-groups*)))
+    (princ (list group-name
+		 (radio-group-description group)))))
+
+(defun radio-show-selected-groups ()
+  (interactive)
+  (maphash #'(lambda (name group)
+	       (radio-describe-group name))
+	   *radio-groups*))
+
+;;; Getting etags for a group
+
+(defvar radio-etags-program "etags")
+
+(defconst radio-etags-topic-regexp (concat "/.*<" ":[ ]*\\([^ :>]*\\)[ ]*:" ">/\\1/"))
+
+(defvar radio-default-etags-file-name "TAGS")
+
+(defun* radio-scan-group-etags (&optional (group-name (radio-choose-group)))
+  (radio-scan-group-files group-name)
+  (let* ((group (gethash group-name *radio-groups*))
+	 (tags-file (expand-file-name (or (radio-group-etags-file group)
+					  radio-default-etags-file-name)
+				      (file-name-as-directory
+				       (radio-group-base-directory group))))
+	 (args (append (list (format "--output=%s" tags-file)
+			     (format "--regex=%s" radio-etags-topic-regexp))
+		       (radio-group-etags-arguments group)
+		       (radio-group-files group))))
+    (if (= 0 (apply #'call-process radio-etags-program nil nil nil args))
+	(message "Scanned etags for group %s with %d files." 
+		 group-name (length (radio-group-files group)))
+	(error "Failed to scan etags for group %s." group-name))))
+    
+
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+
 
 ;;; Reading and writing tags
 
-(defconst radio-tag-regexp (concat "\\(:\\.\\)[[:space:]]*\\(.*\\)[[:space:]]*\\(>\\)")
+(defconst radio-tag-regexp (concat "\\(<" ":\\)[[:space:]]*\\(.*\\)[[:space:]]*\\(:" ">\\)")
   "Regular expression matching tags.")
 
 (defun radio-format-tag-regexp (string)
