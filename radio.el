@@ -203,7 +203,7 @@ list. See also `radio-match-regexp-or-list'."
 
 (defun radio-format-tag-regexp (string)
   "Make a regexp to find STRING as a tag."
-  (concat "<" ":" "\\.[[:space:]]+" string "[[:space:]]+" ":" ">"))
+  (concat "<" ":" "[[:space:]]+" string "[[:space:]]+" ":" ">"))
 
 (defun radio-read-next-tag (&optional bound)
   "Find the next tag, if any, regardless of tag content."
@@ -231,7 +231,7 @@ list. See also `radio-match-regexp-or-list'."
 
 ;;; Finding topic tags
 
-(defvar *radio-tags* nil)
+(make-variable-buffer-local (defvar *radio-tags* nil))
 
 (defun* radio-all-tags-in-buffer (&optional (buffer (current-buffer)))
   (interactive)
@@ -242,25 +242,19 @@ list. See also `radio-match-regexp-or-list'."
 	(push (match-string-no-properties 2) tags))
       tags)))
 
-(defun radio-choose-tag ()
+(defun* radio-rescan-tags (&optional (buffer (current-buffer)))
+  (interactive)
+  (let ((tags (radio-all-tags-in-buffer buffer)))
+    (setf *radio-tags* 
+	  (sort (remove-duplicates tags :test 'equal)
+		#'string<))))
+
+(defun* radio-choose-tag ()
   (interactive)
   (when (null *radio-tags*)
     (radio-rescan-tags))
   (completing-read "Choose tag: " *radio-tags*))
 
-(defun radio-find-tag ()
-  (interactive)
-  (radio-seek-tag (radio-choose-tag)))
-
-
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-;; TODO TODO TODO TODO TODO TODO TODO TODO
-  
 ;;; Navigating groups of tags within the current buffer
 
 (defun* radio-next-tag-in-buffer (&optional (tag (radio-auto-choose-tag)) noerror nowrap bound)
@@ -288,64 +282,22 @@ list. See also `radio-match-regexp-or-list'."
 	(goto-char (point-max))
 	(re-search-backward search-string nil noerror)))))
 
-;;; Navigating to the next tag in the project
+;; (defun radio-find-tag ()
+;;   (interactive)
+;;   (radio-seek-tag (radio-choose-tag)))
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
+;; TODO TODO TODO TODO TODO TODO TODO TODO
 
-(defvar radio-use-flash nil)
-
-(defvar radio-flash-length 1.0)
-
-(defun radio-flash-header (string)
-  (lexical-let ((old-format header-line-format)
-		(buffer header-line-format))
-    (setf header-line-format (propertize string
-					 'face 'radio-attention-face))
-    (run-at-time radio-flash-length nil (lambda ()
-					  (with-current-buffer buffer
-					  (setf header-line-format old-format))))))
+;;; Navigating to the next such tag in the group
 
 (defun* radio-seek-tag (&optional (tag (radio-auto-choose-tag)) backward)
   (when tag
-    (let* ((start-buffer (current-buffer))
-	   (start-point (point))
-	   (filename (radio-bare-file-name))
-	   (pos nil)
-	   (point-min-or-max (if backward #'point-max #'point-min))
-	   (seek-function (if backward #'radio-previous-tag-in-buffer
-			      #'radio-next-tag-in-buffer))
-	   (current-file filename)
-	   (new-file nil)
-	   (found-elsewhere nil))
-      (message "Seeking %S" tag)
-      (unless (funcall seek-function tag :noerror :nowrap)
-	(setf found-elsewhere
-	      (block seeking
-		(loop 
-		   do
-		     (progn 
-		       (find-file (radio-project-file *radio-project* current-file))
-		       (when (not (string= current-file filename))
-			 (goto-char (funcall point-min-or-max)))
-		       (when (funcall seek-function tag :noerror :nowrap)
-			 (when radio-use-flash 
-			   (radio-flash-header (concat (format "  %s @  %s"
-							       tag current-file))))
-			 (return-from seeking :found))
-		       ;; didn't find it. choose a new file from the list.
-		       (setf pos (position current-file *radio-files*
-					   :test 'equal))
-		       (setf new-file (nth (mod (+ pos (if backward -1 1))
-						(length *radio-files*))
-					   *radio-files*))
-			 (setf current-file new-file))
-		     ;; did we wrap around to the buffer we started with?
-		     while (not (string= new-file filename)))
-		  (return-from seeking nil)))
-	  (when (not found-elsewhere)
-	    ;; see if we could wrap around in the original buffer.
-	    (switch-to-buffer start-buffer)
-	    (goto-char (funcall point-min-or-max))
-	    (unless (funcall seek-function tag :noerror :nowrap)
-	      (error "No such tag found.")))))
+    ;; TODO write this
     (recenter)))
 	    
 (defun* radio-next-tag (&optional (tag (radio-auto-choose-tag)))

@@ -1,0 +1,2 @@
+* TODO Integrate uuid material from radio-old.el
+* TODO Bring back linkd features with icons and read-only text, click menu
